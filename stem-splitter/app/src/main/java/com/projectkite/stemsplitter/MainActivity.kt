@@ -5,33 +5,44 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.text.format.DateUtils
+import android.view.Gravity
 import android.view.View
+import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.TextView
-import com.projectkite.stemsplitter.Ui.button
 import com.projectkite.stemsplitter.Ui.card
+import com.projectkite.stemsplitter.Ui.chip
 import com.projectkite.stemsplitter.Ui.dp
 import com.projectkite.stemsplitter.Ui.horizontal
+import com.projectkite.stemsplitter.Ui.icon
 import com.projectkite.stemsplitter.Ui.margins
+import com.projectkite.stemsplitter.Ui.overline
+import com.projectkite.stemsplitter.Ui.pillButton
+import com.projectkite.stemsplitter.Ui.pressable
 import com.projectkite.stemsplitter.Ui.setScrollingContent
 import com.projectkite.stemsplitter.Ui.text
 import com.projectkite.stemsplitter.Ui.vertical
+import com.projectkite.stemsplitter.Ui.wordmark
 
 class MainActivity : Activity() {
     private var selected: Uri? = null
 
-    private lateinit var fileLabel: TextView
+    private lateinit var pickTitle: TextView
+    private lateinit var pickSubtitle: TextView
+    private lateinit var pickIcon: FrameLayout
     private lateinit var splitButton: View
     private lateinit var progressCard: LinearLayout
+    private lateinit var ring: ProgressRing
+    private lateinit var percentText: TextView
     private lateinit var progressTitle: TextView
     private lateinit var progressStage: TextView
-    private lateinit var progressBar: ProgressBar
     private lateinit var errorText: TextView
+    private lateinit var libraryCount: TextView
     private lateinit var historyList: LinearLayout
 
     private val observer: (JobState) -> Unit = ::render
@@ -40,46 +51,101 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         val root = vertical()
 
-        root.addView(text(getString(R.string.app_name), 28f, bold = true))
-        root.addView(text(getString(R.string.tagline), 15f, Ui.TEXT_DIM).margins(top = dp(4), bottom = dp(20)))
+        // Top bar: wordmark + badge.
+        val top = horizontal()
+        top.addView(wordmark(22f), Ui.weighted())
+        top.addView(text(getString(R.string.badge), 11f, Ui.TEXT, 700, 0.08f).apply {
+            background = Ui.rounded(Ui.GLASS_STRONG, dp(12).toFloat(), Ui.GLASS_BORDER, dp(1))
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+        })
+        root.addView(top.margins(top = dp(8), bottom = dp(36)))
 
-        // File picker card.
-        val pick = card()
-        pick.addView(text(getString(R.string.step_choose), 13f, Ui.TEXT_DIM, bold = true))
-        fileLabel = text(getString(R.string.no_file), 17f).also { pick.addView(it.margins(top = dp(8), bottom = dp(12))) }
-        val buttons = horizontal()
-        buttons.addView(button(getString(R.string.choose_file), filled = false) { chooseFile() }, Ui.weighted())
-        splitButton = button(getString(R.string.split)) { startSplit() }
-        buttons.addView(splitButton, Ui.weighted().apply { marginStart = dp(12) })
-        pick.addView(buttons)
-        pick.addView(text(getString(R.string.stems_hint), 13f, Ui.TEXT_DIM).margins(top = dp(12)))
+        // Hero.
+        root.addView(text(getString(R.string.hero_title), 34f, Ui.TEXT, 800, -0.02f))
+        root.addView(text(getString(R.string.hero_subtitle), 16f, Ui.TEXT_DIM).margins(top = dp(12), bottom = dp(28)))
+
+        // Song picker.
+        val pick = card(18)
+        val pickRow = horizontal()
+        pickIcon = FrameLayout(this).apply {
+            background = Ui.gradient(dp(18).toFloat())
+            addView(icon(R.drawable.ic_upload, Color.WHITE, 26), FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
+        }
+        pickRow.addView(pickIcon, LinearLayout.LayoutParams(dp(56), dp(56)).apply { marginEnd = dp(16) })
+        val pickTexts = vertical()
+        pickTitle = text(getString(R.string.choose_song), 17f, Ui.TEXT, 700)
+        pickSubtitle = text(getString(R.string.formats), 13f, Ui.TEXT_DIM).apply { maxLines = 1 }
+        pickTexts.addView(pickTitle)
+        pickTexts.addView(pickSubtitle.margins(top = dp(5)))
+        pickRow.addView(pickTexts, Ui.weighted())
+        pickRow.addView(icon(R.drawable.ic_chevron, Ui.TEXT_FAINT, 22))
+        pick.addView(pickRow)
+        pick.pressable(24) { chooseFile() }
         root.addView(pick)
 
-        // Progress card.
-        progressCard = card().apply { visibility = View.GONE }
-        progressTitle = text("", 17f, bold = true).also { progressCard.addView(it) }
-        progressStage = text("", 14f, Ui.TEXT_DIM).also { progressCard.addView(it.margins(top = dp(4))) }
-        progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 1000
-            progressTintList = android.content.res.ColorStateList.valueOf(Ui.ACCENT)
+        splitButton = pillButton(getString(R.string.split), R.drawable.ic_sparkle) { startSplit() }
+        root.addView(splitButton.margins(top = dp(14)))
+
+        // What you get.
+        val chips = vertical()
+        val sources = listOf("vocals", "drums", "bass", "guitar", "piano", "other")
+        for (row in sources.chunked(3)) {
+            val line = horizontal()
+            for (source in row) {
+                line.addView(chip(StemStore.label(source), Ui.stemColor(source)), Ui.wrap().apply { marginEnd = dp(8) })
+            }
+            chips.addView(line.margins(bottom = dp(8)))
         }
-        progressCard.addView(progressBar.margins(top = dp(12), bottom = dp(12)))
+        root.addView(chips.margins(top = dp(18)))
+
+        // Progress.
+        progressCard = card(24).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            visibility = View.GONE
+        }
+        val ringBox = FrameLayout(this)
+        ring = ProgressRing(this)
+        ringBox.addView(ring, FrameLayout.LayoutParams(dp(168), dp(168)))
+        val ringLabel = vertical().apply { gravity = Gravity.CENTER }
+        percentText = text("0%", 36f, Ui.TEXT, 800, -0.02f).apply { gravity = Gravity.CENTER }
+        ringLabel.addView(percentText)
+        ringLabel.addView(overline(getString(R.string.processing)).apply { gravity = Gravity.CENTER }.margins(top = dp(4)))
+        ringBox.addView(ringLabel, FrameLayout.LayoutParams(dp(168), dp(168), Gravity.CENTER))
+        progressCard.addView(ringBox, LinearLayout.LayoutParams(dp(168), dp(168)))
+        progressTitle = text("", 18f, Ui.TEXT, 700).apply {
+            gravity = Gravity.CENTER
+            maxLines = 2
+        }
+        progressCard.addView(progressTitle.margins(top = dp(22)))
+        progressStage = text("", 14f, Ui.TEXT_DIM).apply { gravity = Gravity.CENTER }
+        progressCard.addView(progressStage.margins(top = dp(6), bottom = dp(18)))
         progressCard.addView(
-            button(getString(R.string.cancel), filled = false, color = Ui.ERROR) {
+            pillButton(getString(R.string.cancel), R.drawable.ic_close, primary = false, tint = Ui.TEXT_DIM) {
                 SeparationJob.cancelRequested = true
                 progressStage.text = getString(R.string.cancelling)
             },
+            Ui.wrap(),
         )
-        root.addView(progressCard.margins(top = dp(16)))
+        root.addView(progressCard.margins(top = dp(20)))
 
-        errorText = text("", 14f, Ui.ERROR).apply { visibility = View.GONE }
+        errorText = text("", 14f, Ui.ERROR).apply {
+            visibility = View.GONE
+            background = Ui.rounded(0x1FFF6B81, dp(16).toFloat())
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+        }
         root.addView(errorText.margins(top = dp(16)))
 
-        root.addView(text(getString(R.string.your_splits), 20f, bold = true).margins(top = dp(28), bottom = dp(8)))
+        // Library.
+        val libraryHeader = horizontal()
+        libraryHeader.addView(text(getString(R.string.library), 22f, Ui.TEXT, 800, -0.01f), Ui.weighted())
+        libraryCount = text("", 13f, Ui.TEXT_FAINT, 600)
+        libraryHeader.addView(libraryCount)
+        root.addView(libraryHeader.margins(top = dp(36), bottom = dp(14)))
         historyList = vertical()
         root.addView(historyList)
 
         setScrollingContent(root)
+        Ui.animateIn(root)
         handleIncoming(intent)
 
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -105,7 +171,7 @@ class MainActivity : Activity() {
         super.onStop()
     }
 
-    /** Audio shared to the app from another app ("Share → Stem Splitter"). */
+    /** Audio shared to the app from another app ("Share → CKSplitter"). */
     private fun handleIncoming(intent: Intent?) {
         val uri = when (intent?.action) {
             Intent.ACTION_SEND -> if (Build.VERSION.SDK_INT >= 33) {
@@ -121,6 +187,7 @@ class MainActivity : Activity() {
     }
 
     private fun chooseFile() {
+        if (SeparationJob.isRunning) return
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
             .addCategory(Intent.CATEGORY_OPENABLE)
             .setType("audio/*")
@@ -140,7 +207,9 @@ class MainActivity : Activity() {
 
     private fun select(uri: Uri) {
         selected = uri
-        fileLabel.text = StemStore.displayName(this, uri)
+        pickTitle.text = StemStore.displayName(this, uri)
+        pickSubtitle.text = getString(R.string.tap_to_change)
+        (pickIcon.getChildAt(0) as? android.widget.ImageView)?.setImageResource(R.drawable.ic_music)
         errorText.visibility = View.GONE
         render(SeparationJob.state)
     }
@@ -155,15 +224,21 @@ class MainActivity : Activity() {
     private fun render(state: JobState) {
         val running = state is JobState.Running
         splitButton.isEnabled = !running && selected != null
-        splitButton.alpha = if (splitButton.isEnabled) 1f else 0.4f
-        progressCard.visibility = if (running) View.VISIBLE else View.GONE
+        splitButton.alpha = if (splitButton.isEnabled) 1f else 0.35f
+        if (running && progressCard.visibility != View.VISIBLE) {
+            progressCard.visibility = View.VISIBLE
+            progressCard.alpha = 0f
+            progressCard.animate().alpha(1f).setDuration(300).start()
+        } else if (!running) {
+            progressCard.visibility = View.GONE
+        }
         when (state) {
             is JobState.Running -> {
                 progressTitle.text = state.title
-                val percent = (state.progress * 100).toInt()
+                percentText.text = "${(state.progress * 100).toInt()}%"
+                ring.progress = state.progress
                 val eta = state.etaSeconds?.let { " · " + getString(R.string.time_left, Ui.formatTime(it)) } ?: ""
-                progressStage.text = if (SeparationJob.cancelRequested) getString(R.string.cancelling) else "${state.stage} · $percent%$eta"
-                progressBar.progress = (state.progress * 1000).toInt()
+                progressStage.text = if (SeparationJob.cancelRequested) getString(R.string.cancelling) else state.stage + eta
             }
             is JobState.Done -> {
                 SeparationJob.update(JobState.Idle)
@@ -182,27 +257,56 @@ class MainActivity : Activity() {
     private fun renderHistory() {
         historyList.removeAllViews()
         val splits = StemStore.history(this)
+        libraryCount.text = if (splits.isEmpty()) "" else resources.getQuantityString(R.plurals.songs, splits.size, splits.size)
         if (splits.isEmpty()) {
-            historyList.addView(text(getString(R.string.no_splits), 14f, Ui.TEXT_DIM))
+            val empty = card(24).apply { gravity = Gravity.CENTER_HORIZONTAL }
+            empty.addView(icon(R.drawable.ic_music, Ui.TEXT_FAINT, 32))
+            empty.addView(text(getString(R.string.no_splits), 14f, Ui.TEXT_DIM).apply { gravity = Gravity.CENTER }.margins(top = dp(10)))
+            historyList.addView(empty)
             return
         }
-        for (split in splits) {
-            val row = card().apply {
-                isClickable = true
-                isFocusable = true
-                setOnClickListener { startActivity(ResultActivity.intent(this@MainActivity, split)) }
-                setOnLongClickListener { confirmDelete(split); true }
-            }
-            row.addView(text(split.title, 16f, bold = true))
-            val ago = DateUtils.getRelativeTimeSpanString(split.time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS)
-            val names = split.stems.sortedBy { StemStore.order(it.source) }.joinToString(" · ") { StemStore.label(it.source) }
-            row.addView(text("$ago — $names", 13f, Ui.TEXT_DIM).margins(top = dp(4)))
-            historyList.addView(row.margins(bottom = dp(10)))
+        for (split in splits) historyList.addView(historyRow(split).margins(bottom = dp(10)))
+    }
+
+    private fun historyRow(split: Split): View {
+        val row = card(14)
+        val line = horizontal()
+        val art = FrameLayout(this).apply {
+            background = Ui.gradient(dp(14).toFloat(), artColors(split.title))
+            addView(
+                text(split.title.trim().take(1).uppercase(), 20f, Color.WHITE, 800).apply { gravity = Gravity.CENTER },
+                FrameLayout.LayoutParams(dp(52), dp(52), Gravity.CENTER),
+            )
         }
+        line.addView(art, LinearLayout.LayoutParams(dp(52), dp(52)).apply { marginEnd = dp(14) })
+        val texts = vertical()
+        texts.addView(text(split.title, 16f, Ui.TEXT, 700).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+        val ago = DateUtils.getRelativeTimeSpanString(split.time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS)
+        texts.addView(text(getString(R.string.stems_count, split.stems.size, ago), 13f, Ui.TEXT_DIM).margins(top = dp(4)))
+        val dots = horizontal()
+        for (stem in split.stems.sortedBy { StemStore.order(it.source) }) {
+            dots.addView(View(this).apply {
+                background = Ui.rounded(Ui.stemColor(stem.source), dp(4).toFloat())
+            }, LinearLayout.LayoutParams(dp(14), dp(4)).apply { marginEnd = dp(4) })
+        }
+        texts.addView(dots.margins(top = dp(8)))
+        line.addView(texts, Ui.weighted())
+        line.addView(icon(R.drawable.ic_chevron, Ui.TEXT_FAINT, 22))
+        row.addView(line)
+        row.pressable(24) { startActivity(ResultActivity.intent(this, split)) }
+        row.setOnLongClickListener { confirmDelete(split); true }
+        return row
+    }
+
+    /** A stable two-colour "cover" per song. */
+    private fun artColors(title: String): IntArray {
+        val palette = listOf("vocals", "drums", "bass", "guitar", "piano", "other").map(Ui::stemColor)
+        val h = title.hashCode() and 0x7fffffff
+        return intArrayOf(palette[h % palette.size], palette[(h / palette.size + 1) % palette.size])
     }
 
     private fun confirmDelete(split: Split) {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle(split.title)
             .setMessage(R.string.delete_question)
             .setPositiveButton(R.string.delete_files) { _, _ ->

@@ -22,6 +22,7 @@ class StemMixer(context: Context, uris: List<Uri>) : AutoCloseable {
     private val inputs = uris.map { open(context, it) }
     val frameCount: Long = inputs.minOf { it.frames }
     val sampleRate = SeparationService.SAMPLE_RATE
+    val trackCount get() = inputs.size
 
     private val gains = FloatArray(inputs.size) { 1f }
     private val muted = BooleanArray(inputs.size)

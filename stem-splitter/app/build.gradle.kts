@@ -11,16 +11,30 @@ android {
         applicationId = "com.projectkite.stemsplitter"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+    }
+
+    // CI writes the key from the CKSPLITTER_KEYSTORE secret so every build installs
+    // as an update over the previous one. Without it, the debug key is used.
+    val keystore = file("cksplitter.keystore")
+    val keystorePassword = System.getenv("CKSPLITTER_KEYSTORE_PASSWORD")
+    signingConfigs {
+        if (keystore.exists() && keystorePassword != null) {
+            create("sideload") {
+                storeFile = keystore
+                storePassword = keystorePassword
+                keyAlias = "cksplitter"
+                keyPassword = keystorePassword
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Signed with the debug key so the APK can be sideloaded straight from CI.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("sideload") ?: signingConfigs.getByName("debug")
         }
     }
 

@@ -1,4 +1,4 @@
-name: Stem Splitter APK
+name: CKSplitter APK
 
 on:
   push:
@@ -76,16 +76,24 @@ jobs:
           path: stem-splitter/app/src/main/assets
 
       - name: Build
+        env:
+          CKSPLITTER_KEYSTORE: ${{ secrets.CKSPLITTER_KEYSTORE }}
+          CKSPLITTER_KEYSTORE_PASSWORD: ${{ secrets.CKSPLITTER_KEYSTORE_PASSWORD }}
         run: |
+          if [ -n "$CKSPLITTER_KEYSTORE" ]; then
+            echo "$CKSPLITTER_KEYSTORE" | base64 -d > app/cksplitter.keystore
+          else
+            echo "::warning::CKSPLITTER_KEYSTORE secret not set; signing with a throwaway debug key"
+          fi
           ./gradlew --no-daemon :app:assembleRelease
           mkdir -p dist
-          cp app/build/outputs/apk/release/app-release.apk dist/StemSplitter.apk
+          cp app/build/outputs/apk/release/app-release.apk dist/CKSplitter.apk
           ls -lh dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: StemSplitter-apk
-          path: stem-splitter/dist/StemSplitter.apk
+          name: CKSplitter-apk
+          path: stem-splitter/dist/CKSplitter.apk
 
       - name: Publish to the "stem-splitter-latest" release
         if: github.event_name != 'pull_request'
@@ -93,9 +101,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: stem-splitter-latest
         run: |
+          NOTES="Download CKSplitter.apk on your Android phone (Android 10+) and open it to install. Built automatically from ${GITHUB_REF_NAME} (${GITHUB_SHA::7})."
           if ! gh release view "$TAG" > /dev/null 2>&1; then
-            gh release create "$TAG" --target "$GITHUB_SHA" --prerelease \
-              --title "Stem Splitter (latest build)" \
-              --notes "Download StemSplitter.apk on your Android phone (Android 10+) and open it to install. Built automatically from ${GITHUB_REF_NAME}."
+            gh release create "$TAG" --target "$GITHUB_SHA" --prerelease --title "CKSplitter (latest build)" --notes "$NOTES"
+          else
+            gh release edit "$TAG" --title "CKSplitter (latest build)" --notes "$NOTES"
           fi
-          gh release upload "$TAG" dist/StemSplitter.apk --clobber
+          # Replace older builds (including the pre-rename StemSplitter.apk).
+          for asset in $(gh release view "$TAG" --json assets --jq '.assets[].name'); do
+            gh release delete-asset "$TAG" "$asset" --yes
+          done
+          gh release upload "$TAG" dist/CKSplitter.apk

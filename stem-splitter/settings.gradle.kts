@@ -17,7 +17,7 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "StemSplitter"
+rootProject.name = "CKSplitter"
 include(":core")
 // The Android app needs the Android SDK; `-PcoreOnly` lets the core module be
 // built and tested on a plain JVM.

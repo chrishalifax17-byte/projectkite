@@ -34,6 +34,7 @@ data class Split(val title: String, val time: Long, val stems: List<Stem>) {
 
 object StemStore {
     const val INSTRUMENTAL = "instrumental"
+    const val FOLDER = "CKSplitter"
     private const val PREFS = "history"
     private const val KEY = "splits"
 
@@ -63,12 +64,12 @@ object StemStore {
         return name.substringBeforeLast('.').ifBlank { name }
     }
 
-    /** Creates a pending WAV entry in Music/Stem Splitter/<folder>/. */
+    /** Creates a pending WAV entry in Music/CKSplitter/<folder>/. */
     fun createWav(context: Context, folder: String, source: String): Uri {
         val values = ContentValues().apply {
             put(MediaStore.Audio.Media.DISPLAY_NAME, "${label(source)}.wav")
             put(MediaStore.Audio.Media.MIME_TYPE, "audio/wav")
-            put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/Stem Splitter/${safeName(folder)}/")
+            put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/$FOLDER/${safeName(folder)}/")
             put(MediaStore.Audio.Media.TITLE, "${label(source)} - $folder")
             put(MediaStore.Audio.Media.IS_PENDING, 1)
         }

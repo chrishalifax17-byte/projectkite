@@ -1,22 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Stem Splitter</string>
-    <string name="tagline">Split any song into vocals, drums, bass, guitar, piano and other — fully on your phone.</string>
-    <string name="step_choose">SONG</string>
-    <string name="no_file">No file selected</string>
-    <string name="choose_file">Choose song</string>
+    <string name="app_name">CKSplitter</string>
+    <string name="badge">AI · OFFLINE</string>
+    <string name="hero_title">Isolate every instrument.</string>
+    <string name="hero_subtitle">Studio-grade stem separation, powered by AI and running entirely on your phone.</string>
+    <string name="choose_song">Choose a song</string>
+    <string name="formats">MP3 · WAV · FLAC · M4A · OGG</string>
+    <string name="tap_to_change">Ready to split · tap to change</string>
     <string name="split">Split into stems</string>
-    <string name="split_with">Split into stems</string>
-    <string name="stems_hint">Works offline with MP3, WAV, FLAC, M4A, OGG and more. A 4-minute song takes a few minutes depending on your phone. You can leave the app while it works.</string>
+    <string name="split_with">Split with CKSplitter</string>
+    <string name="processing">Processing</string>
     <string name="cancel">Cancel</string>
     <string name="cancelling">Cancelling…</string>
     <string name="time_left">about %1$s left</string>
     <string name="failed">Could not split “%1$s”: %2$s</string>
-    <string name="your_splits">Your splits</string>
-    <string name="no_splits">Separated songs will appear here.</string>
-    <string name="delete_question">Delete the stem files from your Music folder, or just remove this entry from the list?</string>
+    <string name="library">Library</string>
+    <plurals name="songs">
+        <item quantity="one">%d song</item>
+        <item quantity="other">%d songs</item>
+    </plurals>
+    <string name="stems_count">%1$d stems · %2$s</string>
+    <string name="no_splits">Your separated songs will live here.</string>
+    <string name="delete_question">Delete the stem files from your Music folder, or just remove this entry from the library?</string>
     <string name="delete_files">Delete files</string>
-    <string name="remove_from_list">Remove from list</string>
+    <string name="remove_from_list">Remove from library</string>
 
     <string name="stage_preparing">Preparing</string>
     <string name="stage_decoding">Decoding audio</string>
@@ -27,15 +34,16 @@
 
     <string name="channel_progress">Separation progress</string>
     <string name="channel_done">Finished separations</string>
-    <string name="notification_done">Stems are ready — tap to open the mixer</string>
+    <string name="notification_done">Your stems are ready — tap to open the mixer</string>
     <string name="notification_failed">Separation failed: %1$s</string>
 
-    <string name="saved_to">Saved as WAV in Music/Stem Splitter/%1$s</string>
+    <string name="mixer">Mixer</string>
+    <string name="full_mix">Full mix</string>
+    <string name="stems_playing">%1$d stems in sync</string>
+    <string name="mixer_hint">M mute · S solo</string>
+    <string name="saved_to">WAV · 44.1 kHz · Music/CKSplitter/%1$s</string>
     <string name="cannot_open">Cannot open the stems: %1$s</string>
-    <string name="play">Play</string>
-    <string name="pause">Pause</string>
     <string name="stems">Stems</string>
-    <string name="share">Share</string>
     <string name="share_all">Share all stems</string>
-    <string name="instrumental_hint">Everything except the vocals — ready for karaoke.</string>
+    <string name="instrumental_hint">Everything except vocals · karaoke</string>
 </resources>

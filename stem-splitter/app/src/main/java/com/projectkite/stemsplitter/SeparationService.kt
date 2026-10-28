@@ -50,7 +50,7 @@ class SeparationService : Service() {
 
     private fun run(uri: Uri, title: String) {
         val wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "StemSplitter:separation")
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CKSplitter:separation")
         wakeLock.acquire(6 * 60 * 60 * 1000L)
         val decoded = File(cacheDir, "decoded.pcm")
         val resampled = File(cacheDir, "resampled.pcm")
