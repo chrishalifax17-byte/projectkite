@@ -1,0 +1,101 @@
+name: Stem Splitter APK
+
+on:
+  push:
+    paths:
+      - "stem-splitter/**"
+      - ".github/workflows/stem-splitter.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: stem-splitter
+
+jobs:
+  model:
+    name: Export model & test core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Python dependencies
+        run: pip install -r tools/requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: Cache exported model
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: stem-splitter/build/stems.onnx
+          key: stems-onnx-${{ hashFiles('stem-splitter/tools/**') }}
+
+      - name: Export htdemucs_6s to ONNX
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p build
+          python tools/export_onnx.py --model htdemucs_6s --out build/stems.onnx
+          ls -lh build/stems.onnx
+
+      - name: Compare Kotlin pipeline with PyTorch demucs
+        run: |
+          python tools/export_onnx.py --random --out build/vectors/model.onnx --test-vectors build/vectors
+          ./gradlew --no-daemon -PcoreOnly :core:test -PtestVectors=$PWD/build/vectors
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model
+          path: stem-splitter/build/stems.onnx
+          retention-days: 3
+
+  apk:
+    name: Build APK
+    needs: model
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: model
+          path: stem-splitter/app/src/main/assets
+
+      - name: Build
+        run: |
+          ./gradlew --no-daemon :app:assembleRelease
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk dist/StemSplitter.apk
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StemSplitter-apk
+          path: stem-splitter/dist/StemSplitter.apk
+
+      - name: Publish to the "stem-splitter-latest" release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: stem-splitter-latest
+        run: |
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --prerelease \
+              --title "Stem Splitter (latest build)" \
+              --notes "Download StemSplitter.apk on your Android phone (Android 10+) and open it to install. Built automatically from ${GITHUB_REF_NAME}."
+          fi
+          gh release upload "$TAG" dist/StemSplitter.apk --clobber

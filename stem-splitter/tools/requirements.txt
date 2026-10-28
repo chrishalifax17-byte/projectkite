@@ -1,0 +1,6 @@
+# Versions used to export and verify the model.
+torch==2.15.0
+demucs==4.1.0
+onnx==1.23.2
+onnxscript==0.7.2
+onnxruntime==1.31.1
