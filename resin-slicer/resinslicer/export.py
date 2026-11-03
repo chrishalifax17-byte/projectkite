@@ -5,12 +5,16 @@ import base64
 import io
 import json
 import math
+import multiprocessing as mp
+import os
+import shutil
 import time
 import zipfile
 
 import numpy as np
 from PIL import Image
 
+from . import goo
 from .raster import LayerSlicer, rasterize_bodies
 
 
@@ -36,40 +40,158 @@ def layer_areas(bodies, layer_h, pitch):
     return areas
 
 
-def slice_to_sl1(path, bodies, printer, settings, job_name, resin_ml, print_time_s,
-                 resin_name, progress=None):
-    """Write an SL1-style zip: one grayscale PNG per layer plus config files.
+# ------------------------------------------------------------------ layer rendering
+# Layers are independent, so they are rendered in worker processes. State is
+# put in a module global *before* the pool forks so children inherit it
+# without pickling the meshes.
+_G = {}
 
-    The plate is centred on the screen. Use UVtools to convert the archive to
-    a printer-specific format (.ctb, .goo, .pwmx, ...).
-    """
-    px = printer.pixel_x_um / 1000
-    py = printer.pixel_y_um / 1000
+
+def _frame_geometry(bodies, printer):
+    px, py = printer.pixel_x_um / 1000, printer.pixel_y_um / 1000
     W, H = printer.res_x, printer.res_y
     x0, y0 = -W * px / 2, -H * py / 2
     lo = np.min([b.bounds[0] for b in bodies], axis=0)
     hi = np.max([b.bounds[1] for b in bodies], axis=0)
-    # Only rasterize the occupied window, then paste into the full frame.
     c0 = max(0, int(math.floor((lo[0] - x0) / px)) - 1)
     c1 = min(W, int(math.ceil((hi[0] - x0) / px)) + 1)
     r0 = max(0, int(math.floor((lo[1] - y0) / py)) - 1)
     r1 = min(H, int(math.ceil((hi[1] - y0) / py)) + 1)
-    slicers = [LayerSlicer(b) for b in bodies]
+    block = max(1, int(math.ceil(max(c1 - c0, r1 - r0) / 290)))
+    return dict(px=px, py=py, W=W, H=H, x0=x0, y0=y0, c0=c0, c1=c1, r0=r0, r1=r1,
+                top=float(hi[2]), block=block)
+
+
+def _render_layer(i):
+    g = _G
+    z = (i + 0.5) * g["lh"]
+    win = rasterize_bodies(g["slicers"], z, g["x0"] + g["c0"] * g["px"], g["y0"] + g["r0"] * g["py"],
+                           g["px"], g["py"], g["c1"] - g["c0"], g["r1"] - g["r0"], supersample=g["aa"])
+    if win.dtype != np.uint8:
+        win = win.astype(np.uint8) * 255
+    win = win[::-1]  # image row 0 is the far (max Y) edge of the screen
+    area = float(win.sum(dtype=np.int64)) / 255.0 * g["px"] * g["py"]
+    bsz = g["block"]
+    h, w = win.shape
+    hp, wp = -(-h // bsz) * bsz, -(-w // bsz) * bsz
+    occ = np.zeros((hp, wp), bool)
+    occ[:h, :w] = win > 0
+    occ = occ.reshape(hp // bsz, bsz, wp // bsz, bsz).any(axis=(1, 3))
+    if g["fmt"] == "goo":
+        lengths, values = goo.runs_from_window(win, g["W"], g["H"], g["c0"], g["H"] - g["r1"])
+        payload = goo.encode_runs(lengths, values)
+    else:
+        frame = np.zeros((g["H"], g["W"]), np.uint8)
+        frame[g["H"] - g["r1"]:g["H"] - g["r0"], g["c0"]:g["c1"]] = win
+        buf = io.BytesIO()
+        Image.fromarray(frame).save(buf, format="PNG", compress_level=1)
+        payload = buf.getvalue()
+    return i, payload, area, occ
+
+
+def render_layers(bodies, printer, layer_h, aa, fmt, workers=None):
+    """Yield (index, payload, area_mm2, preview_occupancy) for each layer in order."""
+    geom = _frame_geometry(bodies, printer)
+    n = layer_count(geom["top"], layer_h)
+    _G.clear()
+    _G.update(geom, slicers=[LayerSlicer(b) for b in bodies], lh=layer_h, aa=max(1, int(aa)), fmt=fmt)
+    workers = workers or max(1, min(8, (os.cpu_count() or 2)))
+    try:
+        if workers > 1 and n > 8:
+            ctx = mp.get_context("fork")
+            with ctx.Pool(workers) as pool:
+                yield from pool.imap(_render_layer, range(n), chunksize=2)
+        else:
+            for i in range(n):
+                yield _render_layer(i)
+    finally:
+        _G.clear()
+
+
+def _heightmap_add(hmap, occ, i):
+    if hmap is None:
+        hmap = np.zeros(occ.shape, np.int32)
+    hmap[occ] = i + 1
+    return hmap
+
+
+def slice_to_goo(path, bodies, printer, settings, resin, resin_ml, progress=None, workers=None):
+    """Write a native Elegoo .goo file. Returns (n_layers, areas, print_time_s)."""
+    from .settings import peel_motion, global_motion, layer_exposure, layer_motion_time
     lh = settings.layer_height_mm
-    n = layer_count(hi[2], lh)
-    aa = max(1, int(settings.anti_aliasing))
+    geom = _frame_geometry(bodies, printer)
+    n = layer_count(geom["top"], lh)
+    g = global_motion(settings)
+
+    def params(i, area):
+        bottom = i < settings.bottom_layers
+        m = g
+        if settings.adaptive_lift and not bottom:
+            m = peel_motion(area, resin, printer)
+        lp = goo.LayerParams(z=round((i + 1) * lh, 5), exposure=layer_exposure(settings, i),
+                             lift_distance=m["lift_distance"], lift_speed=m["lift_speed"],
+                             second_lift_distance=m["second_lift_distance"],
+                             second_lift_speed=m["second_lift_speed"],
+                             retract_distance=m["retract_distance"], retract_speed=m["retract_speed"],
+                             second_retract_distance=m["second_retract_distance"],
+                             second_retract_speed=m["second_retract_speed"],
+                             after_retract=m["rest"])
+        if bottom:  # bottom layers peel off the plate-bonded raft: always slow
+            lp.lift_speed = min(lp.lift_speed, 60.0)
+            lp.second_lift_speed = min(lp.second_lift_speed, 150.0)
+        return lp, m
+
+    areas = np.zeros(n)
+    hmap = None
+    total_time = 0.0
+    tmp = str(path) + ".layers"
+    with open(tmp, "wb") as f:
+        for i, rle, area, occ in render_layers(bodies, printer, lh, settings.anti_aliasing, "goo", workers):
+            areas[i] = area
+            hmap = _heightmap_add(hmap, occ, i)
+            lp, m = params(i, area)
+            total_time += layer_motion_time(m, lp.exposure)
+            f.write(goo.layer_bytes(lp, rle, pause_z=printer.max_z_mm))
+            if progress:
+                progress(i + 1, n)
+    hm = hmap if hmap is not None else np.zeros((4, 4), np.int32)
+    b0, _ = params(0, 0.0)
+    nrm, _ = params(settings.bottom_layers, 0.0)
+    nrm.lift_distance, nrm.lift_speed = g["lift_distance"], g["lift_speed"]
+    header = goo.header_bytes(
+        printer_name=printer.model_name or printer.name, printer_type="MSLA",
+        profile_name=f"{resin.name} {lh}mm", aa=max(1, settings.anti_aliasing),
+        res_x=printer.res_x, res_y=printer.res_y, size_x=printer.width_mm, size_y=printer.depth_mm,
+        size_z=printer.max_z_mm, layer_h=lh, n_layers=n, exposure=settings.exposure_s,
+        bottom_exposure=settings.bottom_exposure_s, bottom_layers=settings.bottom_layers,
+        transition=settings.transition_layers, bottom=b0, normal=nrm, print_time=total_time,
+        volume_mm3=resin_ml * 1000, weight_g=resin_ml * resin.density_g_ml,
+        price=resin_ml * resin.density_g_ml / 1000 * resin.price_per_kg,
+        small_preview=goo.preview_from_heightmap(hm, goo.SMALL_PREVIEW, printer.pixel_x_um / printer.pixel_y_um),
+        big_preview=goo.preview_from_heightmap(hm, goo.BIG_PREVIEW, printer.pixel_x_um / printer.pixel_y_um))
+    with open(path, "wb") as out, open(tmp, "rb") as f:
+        out.write(header)
+        shutil.copyfileobj(f, out, 1 << 22)
+        out.write(goo.ENDING)
+    os.remove(tmp)
+    return n, areas, total_time
+
+
+def slice_to_sl1(path, bodies, printer, settings, job_name, resin_ml, print_time_s,
+                 resin_name, progress=None, workers=None):
+    """Write an SL1-style zip: one grayscale PNG per layer plus config files.
+
+    Use UVtools to convert it to other printer formats (.ctb, .pwmx, ...).
+    """
+    lh = settings.layer_height_mm
+    px, py = printer.pixel_x_um / 1000, printer.pixel_y_um / 1000
+    W, H = printer.res_x, printer.res_y
+    n = layer_count(_frame_geometry(bodies, printer)["top"], lh)
     areas = np.zeros(n)
     with zipfile.ZipFile(path, "w") as zf:
-        for i in range(n):
-            z = (i + 0.5) * lh
-            win = rasterize_bodies(slicers, z, x0 + c0 * px, y0 + r0 * py, px, py,
-                                   c1 - c0, r1 - r0, supersample=aa)
-            frame = np.zeros((H, W), np.uint8)
-            frame[r0:r1, c0:c1] = win if win.dtype == np.uint8 else win.astype(np.uint8) * 255
-            areas[i] = frame.sum() / 255.0 * px * py
-            buf = io.BytesIO()
-            Image.fromarray(frame[::-1]).save(buf, format="PNG", compress_level=3)
-            zf.writestr(f"{job_name}{i:05d}.png", buf.getvalue(), compress_type=zipfile.ZIP_STORED)
+        for i, png, area, _occ in render_layers(bodies, printer, lh, settings.anti_aliasing, "png", workers):
+            areas[i] = area
+            zf.writestr(f"{job_name}{i:05d}.png", png, compress_type=zipfile.ZIP_STORED)
             if progress:
                 progress(i + 1, n)
         nb = settings.bottom_layers

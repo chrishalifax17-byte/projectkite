@@ -14,7 +14,7 @@ from .meshutil import load_mesh, is_solid
 
 @dataclass
 class Options:
-    printer: str = "generic-8k-10in"
+    printer: str = "saturn-4"
     resin: str = "abs-like"
     layer_height: float | None = None
     detail: str = "auto"
@@ -29,6 +29,8 @@ class Options:
     calibrated_exposure: float | None = None
     calibrated_layer: float = 0.05
     slice: bool = True
+    output_format: str | None = None         # "goo" / "sl1"; default = printer native
+    workers: int | None = None
     preview: bool = True
     scale: float = 1.0
 
@@ -161,11 +163,11 @@ def run(input_path, out_dir, opts: Options = Options(), log=print):
 
     # 6. Peel-aware tuning from real layer areas.
     areas = export.layer_areas(bodies, s.layer_height_mm, pitch=float(np.clip(max(hi - lo) / 300, 0.1, 0.5)))
-    st.tune_for_peel(s, float(areas.max()), resin)
+    st.tune_for_peel(s, float(areas.max()), resin, printer)
     n_layers = export.layer_count(hi[2], s.layer_height_mm)
     support_ml = (sres.mesh.volume / 1000) if sres.mesh is not None and len(sres.mesh.faces) else 0.0
     resin_ml = model.volume / 1000 + support_ml
-    t = st.estimate_time_s(s, n_layers)
+    t = st.estimate_time_s(s, n_layers, areas[:n_layers] if len(areas) >= n_layers else None, resin, printer)
     report.update({
         "settings": s.to_dict(),
         "estimates": {
@@ -204,7 +206,8 @@ def run(input_path, out_dir, opts: Options = Options(), log=print):
                    f"{report['estimates']['print_time']}")
         export.write_preview(files["preview"], model, sres.mesh, _drain_markers(cavities, opts), name, summary)
     if opts.slice:
-        files["sl1"] = out / f"{name}.sl1"
+        fmt = opts.output_format or printer.file_format
+        files[fmt] = out / f"{name}.{fmt}"
         last = [0]
 
         def progress(i, n):
@@ -212,8 +215,15 @@ def run(input_path, out_dir, opts: Options = Options(), log=print):
             if pct >= last[0] + 10 or i == n:
                 last[0] = pct
                 log(f"  slicing {pct}%")
-        log(f"Slicing {n_layers} layers at {printer.res_x}x{printer.res_y}, AA x{s.anti_aliasing}...")
-        export.slice_to_sl1(files["sl1"], bodies, printer, s, name, resin_ml, t, resin.name, progress)
+        log(f"Slicing {n_layers} layers at {printer.res_x}x{printer.res_y}, AA x{s.anti_aliasing} -> .{fmt}")
+        if fmt == "goo":
+            _, real_areas, t = export.slice_to_goo(files[fmt], bodies, printer, s, resin, resin_ml,
+                                                   progress, opts.workers)
+            report["estimates"]["print_time"] = f"{int(t // 3600)}h {int(t % 3600 // 60)}m"
+            report["estimates"]["print_time_s"] = round(t)
+        else:
+            export.slice_to_sl1(files[fmt], bodies, printer, s, name, resin_ml, t, resin.name,
+                                progress, opts.workers)
     files["report"] = out / f"{name}_settings.json"
     report["files"] = {k: str(v) for k, v in files.items()}
     export.write_json(files["report"], report)
@@ -229,8 +239,10 @@ def format_summary(r: Result) -> str:
         f"  Exposure             {s.exposure_s} s",
         f"  Bottom exposure      {s.bottom_exposure_s} s x {s.bottom_layers} layers "
         f"(+{s.transition_layers} transition)",
-        f"  Lift                 {s.lift_distance_mm} mm @ {s.lift_speed_mm_min} mm/min, "
-        f"retract {s.retract_speed_mm_min} mm/min",
+        f"  Lift (2-stage)       {s.lift_slow_distance_mm} mm @ {s.lift_speed_mm_min} mm/min, then to "
+        f"{s.lift_distance_mm} mm @ {s.lift_fast_speed_mm_min} mm/min",
+        f"  Retract (2-stage)    {s.retract_speed_mm_min} mm/min, last {s.retract_slow_distance_mm} mm @ "
+        f"{s.retract_slow_speed_mm_min} mm/min",
         f"  Rest before exposure {s.rest_before_exposure_s} s",
         f"  Anti-aliasing        x{s.anti_aliasing}",
         f"  Supports             {s.support_preset}, model lifted {s.lift_height_mm} mm",
